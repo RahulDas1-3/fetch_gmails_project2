@@ -1,6 +1,6 @@
 # reader.py
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 from googleapiclient.errors import HttpError
 
 from auth import GmailAuth
@@ -12,12 +12,15 @@ class GmailReader:
     Reads emails:
       - fetch_last_n: last n recent inbox mails (with optional mark-as-read)
       - fetch_last_n_by_email: last n mails filtered by an email address
+
+    Note: Replying is handled in main.py so the UI can offer AI suggestions and
+    manual edits in the same flow.
     """
 
     def __init__(self, auth: GmailAuth):
         self.service = auth.get_service()
 
-    def _print_message_summary(self, msg: Dict, index: int | None = None):
+    def _print_message_summary(self, msg: Dict, index: Optional[int] = None):
         payload = msg.get("payload", {})
         headers = payload.get("headers", [])
         frm = get_header(headers, "From")
@@ -26,20 +29,18 @@ class GmailReader:
         snippet = msg.get("snippet", "")
         body_text = extract_plain_text_from_payload(payload)
 
-        prefix = f"[{index}] " if index is not None else ""
-        print(f"{prefix}🆔 ID: {msg.get('id')}")
+        idx_prefix = f"[{index}] " if index is not None else ""
+        print(f"{idx_prefix}🆔 ID: {msg.get('id')}")
         print(f"📨 From: {frm}")
         print(f"🧾 Subject: {subject}")
         print(f"🗓  Date: {date}")
         print(f"🔎 Snippet: {snippet}")
-
         if body_text:
-            preview = body_text if len(body_text) <= 800 else body_text[:800] + "\n…(truncated)…"
+            preview = body_text if len(body_text) <= 1200 else body_text[:1200] + "\n…(truncated)…"
             print("— Body (plain text):")
             print(preview)
         else:
             print("— Body: (no plain-text part found)")
-
         print("-" * 60)
 
     def _fetch_full_messages(self, ids: List[str]) -> List[Dict]:
@@ -47,7 +48,7 @@ class GmailReader:
         for mid in ids:
             try:
                 m = self.service.users().messages().get(userId="me", id=mid, format="full").execute()
-                m["id"] = mid
+                m["id"] = mid  # keep at top level
                 full_msgs.append(m)
             except HttpError as e:
                 print(f"⚠️ Could not fetch {mid}: {e}")
@@ -66,7 +67,6 @@ class GmailReader:
 
             for i, msg in enumerate(full_msgs, start=1):
                 self._print_message_summary(msg, index=i)
-
                 if mark_as_read and "UNREAD" in msg.get("labelIds", []):
                     try:
                         self.service.users().messages().modify(
@@ -78,7 +78,6 @@ class GmailReader:
                         print(f"⚠️ Could not mark as read for {msg['id']}: {e}")
 
             return full_msgs
-
         except HttpError as e:
             print(f"❌ Read error: {e}")
             return []
@@ -88,7 +87,7 @@ class GmailReader:
             print("Please provide an email address.")
             return []
 
-        query = f'(from:{email_address}) OR (to:{email_address})'
+        query = f"(from:{email_address}) OR (to:{email_address})"
         try:
             listed = self.service.users().messages().list(userId="me", q=query, maxResults=n).execute()
             msgs_meta = listed.get("messages", []) or []
@@ -101,7 +100,6 @@ class GmailReader:
 
             for i, msg in enumerate(full_msgs, start=1):
                 self._print_message_summary(msg, index=i)
-
                 if mark_as_read and "UNREAD" in msg.get("labelIds", []):
                     try:
                         self.service.users().messages().modify(
@@ -113,7 +111,6 @@ class GmailReader:
                         print(f"⚠️ Could not mark as read for {msg['id']}: {e}")
 
             return full_msgs
-
         except HttpError as e:
             print(f"❌ Read error: {e}")
             return []
