@@ -76,7 +76,7 @@ class GmailSender:
 
     def reply(self, original_message_id: str, reply_text: str) -> Optional[str]:
         """
-        Replies to a specific message ID with proper threading.
+        Normal reply: sends back to the original sender ("From" of the email).
         """
         try:
             original = self.service.users().messages().get(
@@ -113,4 +113,46 @@ class GmailSender:
 
         except HttpError as e:
             print(f"❌ Reply error: {e}")
+            return None
+
+    def reply_to_address(self, original_message_id: str, to_address: str, reply_text: str) -> Optional[str]:
+        """
+        Forced-address reply:
+        - Keeps thread headers (In-Reply-To / References, threadId)
+        - BUT sends ONLY to `to_address` (the email typed in Option 2)
+        """
+        try:
+            original = self.service.users().messages().get(
+                userId="me", id=original_message_id, format="full"
+            ).execute()
+
+            thread_id = original.get("threadId")
+            headers = original.get("payload", {}).get("headers", [])
+
+            subject = get_header(headers, "Subject") or ""
+            message_id_hdr = get_header(headers, "Message-ID")
+
+            if subject and not subject.lower().startswith("re:"):
+                subject = "Re: " + subject
+
+            msg = EmailMessage()
+            msg["From"] = "me"
+            msg["To"] = to_address  # ✅ always send only here
+            if subject:
+                msg["Subject"] = subject
+            if message_id_hdr:
+                msg["In-Reply-To"] = message_id_hdr
+                msg["References"] = message_id_hdr
+
+            msg.set_content(reply_text)
+
+            raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+            body = {"raw": raw, "threadId": thread_id} if thread_id else {"raw": raw}
+
+            sent = self.service.users().messages().send(userId="me", body=body).execute()
+            print(f"✅ Reply (forced To={to_address}) sent! Message ID: {sent.get('id')}")
+            return sent.get("id")
+
+        except HttpError as e:
+            print(f"❌ Forced reply error: {e}")
             return None

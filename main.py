@@ -11,7 +11,6 @@ from utils import extract_plain_text_from_payload, get_header
 
 def _choose_reply_text(suggester: ReplySuggester, email_text: str) -> str | None:
     """Return the reply text to send, or None to cancel."""
-
     try:
         s1, s2 = suggester.suggest_two(email_text=email_text)
     except Exception as e:
@@ -62,7 +61,16 @@ def _choose_reply_text(suggester: ReplySuggester, email_text: str) -> str | None
     return manual
 
 
-def _reply_flow(sender: GmailSender, suggester: ReplySuggester, messages: list[dict]) -> None:
+def _reply_flow(
+    sender: GmailSender,
+    suggester: ReplySuggester,
+    messages: list[dict],
+    forced_to: str | None = None,
+) -> None:
+    """
+    If forced_to is provided (Option 2), the reply will be sent ONLY to that email address.
+    If forced_to is None (Option 1), reply normally to original sender.
+    """
     if not messages:
         return
 
@@ -88,14 +96,15 @@ def _reply_flow(sender: GmailSender, suggester: ReplySuggester, messages: list[d
 
     body_text = extract_plain_text_from_payload(payload) or ""
     email_text = (body_text or msg.get("snippet", "") or "").strip()
-
     if not email_text:
-        print("⚠️  Could not extract any text from this email to build suggestions.")
         email_text = f"From: {frm}\nSubject: {subject}"
 
     print("\nReplying to:")
     print(f"From: {frm}")
     print(f"Subject: {subject}")
+
+    if forced_to:
+        print(f"✅ IMPORTANT: This reply will be sent ONLY to: {forced_to}")
 
     reply_text = _choose_reply_text(suggester=suggester, email_text=email_text)
     if not reply_text:
@@ -106,7 +115,11 @@ def _reply_flow(sender: GmailSender, suggester: ReplySuggester, messages: list[d
         print("❌ Missing message ID; cannot reply.")
         return
 
-    sender.reply(original_message_id=original_id, reply_text=reply_text)
+    # ✅ Option 2 behavior: always send ONLY to the email typed at the beginning
+    if forced_to:
+        sender.reply_to_address(original_message_id=original_id, to_address=forced_to, reply_text=reply_text)
+    else:
+        sender.reply(original_message_id=original_id, reply_text=reply_text)
 
 
 def main() -> None:
@@ -118,7 +131,7 @@ def main() -> None:
     while True:
         print("\nGmail Utility (Modules & Classes)")
         print("1) Fetch last N mails (then reply)")
-        print("2) Fetch last N mails by email address (then reply)")
+        print("2) Fetch last N mails by email address (then reply ONLY to that address)")
         print("3) Send an email (with attachments)")
         print("4) Exit")
         choice = input("\nChoose an option (1-4): ").strip()
@@ -131,10 +144,14 @@ def main() -> None:
             mark = input("Mark as read? (y/N): ").strip().lower().startswith("y")
 
             messages = reader.fetch_last_n(n=n, mark_as_read=mark)
-            _reply_flow(sender=sender, suggester=suggester, messages=messages)
+            _reply_flow(sender=sender, suggester=suggester, messages=messages, forced_to=None)
 
         elif choice == "2":
             email_addr = input("Email address to filter (e.g., alice@example.com): ").strip()
+            if not email_addr:
+                print("❌ Email address cannot be empty.")
+                continue
+
             try:
                 n = int(input("How many messages? ").strip())
             except ValueError:
@@ -142,7 +159,9 @@ def main() -> None:
             mark = input("Mark as read? (y/N): ").strip().lower().startswith("y")
 
             messages = reader.fetch_last_n_by_email(email_address=email_addr, n=n, mark_as_read=mark)
-            _reply_flow(sender=sender, suggester=suggester, messages=messages)
+
+            # ✅ replies go ONLY to email_addr
+            _reply_flow(sender=sender, suggester=suggester, messages=messages, forced_to=email_addr)
 
         elif choice == "3":
             to_addr = input("To: ").strip()
